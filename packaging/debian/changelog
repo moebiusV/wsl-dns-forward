@@ -1,0 +1,5 @@
+wsl-dns-forward (1.0.0-1) unstable; urgency=low
+
+  * Initial release.
+
+ -- David Walther <david@clearbrookdistillery.com>  Sat, 07 Nov 2026 13:00:00 -0800

@@ -1,0 +1,6 @@
+2026-11-07  David Walther  <david@clearbrookdistillery.com>
+
+	* Release 1.0.0.  First public version: dns.c (packet logic), main.c
+	(event loop, helper management, privilege drop), mdns-helper.ps1 (Windows
+	side), unit tests, libFuzzer targets, integration test, man page, and
+	packaging for Debian, Alpine, Fedora/Red Hat and openSUSE.

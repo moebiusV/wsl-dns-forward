@@ -1,0 +1,33 @@
+# Maintainer: David Walther <david@clearbrookdistillery.com>
+pkgname=wsl-dns-forward
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="Local DNS forwarder that makes .local (mDNS) names resolve inside WSL2"
+url="https://github.com/moebiusV/wsl-dns-forward"
+arch="all"
+license="ISC"
+makedepends="bind-tools"
+subpackages="$pkgname-doc"
+source="https://github.com/moebiusV/wsl-dns-forward/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz"
+
+build() {
+	./configure \
+		--build=$CBUILD \
+		--host=$CHOST \
+		--prefix=/usr \
+		--sysconfdir=/etc \
+		--mandir=/usr/share/man \
+		--localstatedir=/var
+	make
+}
+
+check() {
+	make check
+}
+
+package() {
+	make DESTDIR="$pkgdir" install
+	install -Dm644 README.md NEWS -t "$pkgdir"/usr/share/doc/$pkgname/
+}
+
+sha512sums="SHA512SUM_PLACEHOLDER  wsl-dns-forward-1.0.0.tar.gz"

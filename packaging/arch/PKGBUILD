@@ -1,0 +1,31 @@
+# Maintainer: David Walther <david@clearbrookdistillery.com>
+pkgname=wsl-dns-forward
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Local DNS forwarder that makes .local (mDNS) names resolve inside WSL2'
+arch=('x86_64' 'aarch64')
+url='https://github.com/moebiusV/wsl-dns-forward'
+license=('ISC')
+depends=('glibc')
+makedepends=('gcc' 'make' 'bind')
+source=("$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    ./configure --prefix=/usr --sbindir=/usr/bin --sysconfdir=/etc --localstatedir=/var \
+        --with-systemdsystemunitdir=/usr/lib/systemd/system
+    make
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    make check
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make DESTDIR="$pkgdir" install
+    install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
+    install -Dm644 README.md NEWS -t "$pkgdir/usr/share/doc/$pkgname/"
+}

@@ -1,0 +1,31 @@
+wsl-dns-forward for Debian
+===========================
+
+Installing this package does not change /etc/wsl.conf or /etc/resolv.conf,
+because both are the administrator's to decide.  To finish the setup:
+
+1. Add to /etc/wsl.conf:
+
+     [network]
+     generateResolvConf = false
+
+     [boot]
+     command = /usr/sbin/wsl-dns-forward -D -P /run/wsl-dns-forward.pid
+
+2. Put 127.0.0.1 first in /etc/resolv.conf and keep the nameservers that are there now:
+
+     sudo cp /etc/resolv.conf /etc/resolv.conf.pre-wsl-dns-forward
+     { echo "nameserver 127.0.0.1"; grep '^nameserver' /etc/resolv.conf.pre-wsl-dns-forward | head -2; } \
+         | sudo tee /etc/resolv.conf.new >/dev/null && sudo mv -f /etc/resolv.conf.new /etc/resolv.conf
+
+3. Run "wsl --shutdown" from Windows and reopen WSL.
+
+If libnss-mdns is installed, make the hosts line of /etc/nsswitch.conf
+"hosts: files dns", or its mdns entry will stop .local lookups before they
+reach DNS.
+
+A systemd unit is installed but not enabled, for distributions with
+systemd=true:  systemctl enable --now wsl-dns-forward
+
+The full guide, with troubleshooting, is in README.md; the diagnostic
+messages are explained in wsl-dns-forward(8).

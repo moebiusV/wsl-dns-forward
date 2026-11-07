@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: ISC
+# For WSL distros that run systemd ([boot] systemd=true in /etc/wsl.conf).
+# Without systemd, start the daemon from the [boot] command instead; see README.md.
+[Unit]
+Description=Resolve .local (mDNS) names inside WSL2
+Documentation=man:wsl-dns-forward(8)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=@WMF_SBINDIR@/wsl-dns-forward
+Restart=on-failure
+RestartSec=2
+# Needs CAP_NET_BIND_SERVICE for port 53 and CAP_SETUID/CAP_SETGID/CAP_CHOWN to drop to "nobody".
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Creates /var/cache/wsl-dns-forward and keeps it writable under ProtectSystem=strict.
+CacheDirectory=wsl-dns-forward
+
+[Install]
+WantedBy=multi-user.target

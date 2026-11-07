@@ -1,0 +1,21 @@
+Source: wsl-dns-forward
+Section: net
+Priority: optional
+Maintainer: David Walther <david@clearbrookdistillery.com>
+Build-Depends: debhelper-compat (= 13), bind9-dnsutils | dnsutils <!nocheck>
+Standards-Version: 4.7.0
+Homepage: https://github.com/moebiusV/wsl-dns-forward
+Rules-Requires-Root: no
+
+Package: wsl-dns-forward
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: make .local (mDNS) host names resolve inside WSL2
+ A DNS forwarder for the loopback address.  Questions about .local names,
+ which WSL2 cannot answer itself because it cannot see multicast traffic,
+ are answered by a helper running in Windows PowerShell.  All other
+ questions are passed to the normal upstream DNS server.
+ .
+ Aimed at Windows 10, where WSL has no DNS tunneling.  Installing the
+ package does not change /etc/wsl.conf or /etc/resolv.conf; see
+ /usr/share/doc/wsl-dns-forward/README.Debian for the setup steps.

@@ -1,0 +1,4 @@
+nameserver 127.0.0.1
+nameserver 172.24.96.1
+# c
+nameserver 10.255.255.254

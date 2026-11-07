@@ -1,0 +1,13 @@
+wsl-dns-forward NEWS: history of user-visible changes
+
+Version 1.0.0 (2026-11-07)
+
+* Answers A queries for .local names through a Windows PowerShell helper that sends mDNS from every real
+  network adapter. AAAA queries get an empty answer, so programs use IPv4.
+* Names are refreshed before they expire and looked up again before an expired one is answered. The last
+  good address is kept on disk and used when a lookup fails.
+* Upstream DNS servers come from /etc/resolv.conf, the WSL gateway and the Windows 11 DNS tunnel address, and
+  the server that answered last is tried first.
+* A slow lookup never blocks other clients.
+* Runs as an unprivileged user after opening port 53. With -D, a supervisor restarts the worker if it dies.
+* Diagnostics have stable IDs with a cause and a suggested fix, documented in wsl-dns-forward(8).

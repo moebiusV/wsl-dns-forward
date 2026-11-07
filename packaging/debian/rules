@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- --with-systemdsystemunitdir=/usr/lib/systemd/system
+
+# The unit file is shipped but never enabled: the usual WSL setup starts the
+# daemon from the [boot] command in /etc/wsl.conf instead.
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start

@@ -1,0 +1,519 @@
+.\" SPDX-License-Identifier: ISC
+.\" Copyright (c) 2026 David Walther <david@clearbrookdistillery.com>
+.TH WSL-DNS-FORWARD 8 "November 7, 2026" "wsl-dns-forward 1.0.0" "System Administration"
+.SH NAME
+wsl-dns-forward \- make .local (mDNS) host names resolve inside WSL2
+.SH SYNOPSIS
+.B wsl-dns-forward
+.RB [ \-D ]
+.RB [ \-l
+.IR ADDR ]
+.RB [ \-p
+.IR PORT ]
+.RB [ \-u
+.IR HOST[:PORT] ]...
+.RB [ \-U
+.IR USER ]
+.RB [ \-w
+.IR POWERSHELL ]
+.RB [ \-c
+.IR FILE ]
+.RB [ \-P
+.IR FILE ]
+.RB [ \-L
+.IR FILE ]
+.br
+.B wsl-dns-forward
+.B \-h
+|
+.B \-V
+.SH DESCRIPTION
+mDNS (multicast DNS, also sold as Bonjour or Rendezvous) gives every machine on a local network a
+.I name.local
+host name without needing a DNS server.
+.PP
+WSL2 runs behind a private virtual network that cannot see the multicast traffic mDNS depends on, so
+.I name.local
+lookups from inside WSL2 fail or answer unreliably, and the Windows 10 versions of WSL do not have the
+.B dnsTunneling
+feature that newer Windows releases use to hand such lookups to Windows.
+.B wsl-dns-forward
+fixes this with a small DNS server on the loopback address.
+Questions about
+.I .local
+names are answered by asking a helper program running in Windows (PowerShell, started through WSL's interop),
+which sends the mDNS query out of the real network adapter.
+Every other question is passed unchanged to the normal upstream DNS server.
+Programs in WSL2 need no changes: once
+.I /etc/resolv.conf
+points at the daemon, ssh, ping, CUPS and the rest resolve
+.I .local
+names like any other.
+.PP
+The daemon listens on UDP and TCP, serves each connection for one query, and never blocks one client on another.
+It starts as root only to open port 53, then switches to an unprivileged user.
+.SH OPTIONS
+.TP
+.B \-D
+Run in the background.
+Messages go to the log file (see
+.BR \-L )
+instead of the terminal.
+A small supervisor process stays behind as root and restarts the worker if it dies, waiting one second
+after the first failure and doubling up to thirty seconds while it keeps dying young.
+The pid file holds the supervisor's pid, and signalling it stops both.
+.TP
+.BI \-l " ADDR"
+IPv4 address to listen on.
+Default
+.IR 127.0.0.1 .
+Keep it on the loopback address unless you know why not.
+.TP
+.BI \-p " PORT"
+Port to listen on, 1 to 65535.
+Default 53.
+.TP
+.BI \-u " HOST[:PORT]"
+Upstream DNS server for names that are not
+.IR .local .
+May be given up to six times.
+With no
+.BR \-u ,
+the daemon builds the list itself: the non-loopback
+.B nameserver
+lines of
+.IR /etc/resolv.conf ,
+then the WSL default gateway (where Windows 10 runs WSL's DNS proxy), then 10.255.255.254 (the DNS tunnel
+address of Windows 11 22H2 and later), skipping duplicates.
+Whichever server answered last is tried first.
+.TP
+.BI \-U " USER"
+User to run as after the port is open.
+Default
+.IR nobody .
+.B \-U root
+keeps root (not recommended).
+Ignored when not started as root.
+.TP
+.BI \-w " POWERSHELL"
+Path to
+.I powershell.exe
+as seen from WSL.
+Default: the path chosen at build time,
+normally
+.IR /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe .
+If that is not executable, the daemon tries
+.I powershell.exe
+from
+.BR PATH .
+.TP
+.BI \-c " FILE"
+File that remembers the last good address of each name.
+Default
+.IR /var/cache/wsl-dns-forward/last-good .
+.TP
+.BI \-P " FILE"
+Write the process id to
+.IR FILE .
+.TP
+.BI \-L " FILE"
+Log file used with
+.BR \-D .
+Default
+.IR /var/log/wsl-dns-forward.log .
+.TP
+.B \-h
+Print a usage summary.
+.TP
+.B \-V
+Print the version.
+.SH OPERATION
+.SS How a query is handled
+.IP \(bu 3
+A query for
+.IR name.local ,
+type A (an IPv4 address) is answered from the cache while the entry is under two minutes old.
+Entries in the last quarter of that time are refreshed in the background, so names in regular use never wait.
+An expired or unknown name is looked up before it is answered, waiting up to two seconds when an older address
+is known and up to six otherwise, so a device whose address changed is not answered with the old one.
+.IP \(bu 3
+AAAA (IPv6) queries for
+.I .local
+names are answered with an empty, successful reply.
+WSL2 has no IPv6 route to the LAN, and an IPv6 address would give "Network is unreachable";
+the empty answer makes programs use IPv4 at once.
+Other record types get the same empty reply.
+.IP \(bu 3
+.I .local
+names may contain only letters, digits, hyphens and underscores.
+Anything else is refused.
+.IP \(bu 3
+All other queries are relayed unchanged to the upstream server, and the reply is checked
+(same source, same ID, same question) before it is passed back.
+.IP \(bu 3
+A reply is built for the TCP client the same way, but over TCP only one query is served per connection.
+Answers longer than the upstream gives over UDP are not retried over TCP.
+.SS Fallbacks
+Each of these is automatic.
+When one is used, a diagnostic is logged (see DIAGNOSTICS) so you can find out why.
+.IP 1. 3
+.B powershell.exe
+is looked up at the configured path first, then in
+.BR PATH .
+.IP 2. 3
+mDNS queries are sent from every connected network adapter that has an IPv4 address, adapters with a default
+gateway first, skipping WSL's own virtual switches.
+Up to three rounds are made before giving up.
+.IP 3. 3
+If mDNS gets no reply, the Windows resolver (Resolve-DnsName) is tried, which also covers unicast
+.I .local
+entries.
+.IP 4. 3
+If the lookup then fails or times out but an earlier address is known (in memory or in the cache file),
+that last-known-good address is returned instead.
+.IP 5. 3
+If the helper dies, it is restarted on the next lookup, waiting 0.5 s after the first failure and doubling
+up to 30 s.
+Until it is back, uncached
+.I .local
+names get SERVFAIL; cached names and ordinary names keep working.
+With
+.BR \-D ,
+a worker that dies is restarted by the supervisor (see
+.BR \-D ).
+.IP 6. 3
+Upstream servers are tried two seconds each, starting with the one that answered last, so a dead entry in
+the list costs one delay and is then avoided.
+This is what keeps the setup working across a Windows 10 to Windows 11 upgrade, when the saved nameserver
+addresses can go stale.
+.IP 7. 3
+If the daemon itself is not running, programs fall through to the next
+.B nameserver
+line in
+.IR /etc/resolv.conf ,
+so keep your existing nameservers listed after
+.IR 127.0.0.1 .
+Ordinary names then still resolve, just after a delay.
+.SH UPGRADING TO WINDOWS 11
+This section describes what happens to a working setup when the computer is upgraded from Windows 10 to
+Windows 11.
+.SS Short answer
+Nothing needs to change, and
+.I .local
+names keep resolving.
+Windows 11 22H2 and later can also do this job itself (DNS tunneling, which is on by default, and optional
+mirrored networking with multicast support), so the program may become unnecessary, but it does not stop working.
+.SS What carries over
+The configuration lives in the Linux distribution:
+.I /etc/wsl.conf
+and
+.I /etc/resolv.conf
+are not touched by a Windows upgrade or by
+.IR "wsl \-\-update" .
+The
+.B [boot]
+command is supported on Windows 11, so the daemon starts as before.
+The Windows half is Windows PowerShell 5.1 and standard .NET sockets, which Windows 11 provides.
+It uses the connected network adapters, skipping only WSL's own virtual switches, which are named
+.I "vEthernet (WSL...)"
+and
+.I "vEthernet (Default Switch)"
+on both systems.
+.SS What changes
+With DNS tunneling on, Windows 11 answers WSL's DNS at the virtual address 10.255.255.254 and no longer runs a
+DNS proxy at the gateway address that Windows 10 used.
+Nameserver lines saved in
+.I /etc/resolv.conf
+can therefore go stale.
+Without
+.BR \-u ,
+the daemon tries the nameservers in that file, then the gateway, then 10.255.255.254, and remembers the one that
+answered, so no edit is required.
+The first lookup after the upgrade may wait two seconds on a dead entry and report
+.BR W07 ;
+later lookups skip it.
+.SS What to check
+After the upgrade, run
+.I "wsl \-\-update"
+and
+.I "wsl \-\-shutdown"
+in Windows, open WSL again, and run:
+.PP
+.RS
+.nf
+pgrep \-a wsl\-mdns\-forward
+getent ahosts printer.local
+dig +short example.com
+grep upstream /var/log/wsl\-mdns\-forward.log | tail
+.fi
+.RE
+.PP
+The
+.I upstream
+lines list the servers the daemon found; with Windows 11's default settings 10.255.255.254 is one of them.
+.SS Optional tidying
+To remove the one-time delay, delete the dead
+.B nameserver
+lines from
+.I /etc/resolv.conf
+(keep
+.I "nameserver 127.0.0.1"
+first), or pass the right server with
+.BR \-u .
+.SS Settings that matter
+.TP
+.B dnsTunneling=false
+in
+.I %USERPROFILE%\e.wslconfig
+turns Windows 11's DNS tunnel off.
+The gateway answers DNS again, and it is one of the servers tried.
+.TP
+.B networkingMode=mirrored
+makes WSL share Windows' loopback address, so port 53 must be free on the Windows side.
+Otherwise
+.B E01
+is reported.
+.SS Stopping use of the program
+To let Windows 11 manage DNS itself, remove the
+.B [boot]
+command and
+.B generateResolvConf
+lines from
+.IR /etc/wsl.conf ,
+remove
+.IR /etc/resolv.conf ,
+and run
+.I "wsl \-\-shutdown"
+so that WSL recreates it.
+Add
+.B networkingMode=mirrored
+to
+.B [wsl2]
+in
+.I .wslconfig
+if multicast should reach Linux directly.
+.SH FILES
+.TP
+.I /usr/sbin/wsl-dns-forward
+The daemon.
+.TP
+.I /usr/share/wsl-dns-forward/mdns-helper.ps1
+The Windows helper script, sent to PowerShell when needed.
+.TP
+.I /var/cache/wsl-dns-forward/last-good
+Last-known-good addresses, one
+.I name address
+per line.
+.TP
+.I /var/log/wsl-dns-forward.log
+Log (with
+.BR \-D ).
+.TP
+.I /etc/resolv.conf
+Must list
+.I nameserver 127.0.0.1
+first.
+.TP
+.I /etc/wsl.conf
+Where to start the daemon at boot, and where DNS generation is turned off.
+.SH ENVIRONMENT
+.TP
+.B WMF_HELPER_SCRIPT
+Use this helper script instead of the installed one.
+.TP
+.B WMF_HELPER
+A shell command to run instead of PowerShell.
+For testing.
+.TP
+.B WMF_FRESH_MS
+Milliseconds an address stays fresh (default 120000).
+For testing.
+.TP
+.B WMF_RESOLV_CONF
+Read the upstream nameservers from this file instead of
+.IR /etc/resolv.conf .
+.SH EXIT STATUS
+.TP
+.B 0
+Normal stop (SIGTERM or SIGINT) or successful
+.B \-h
+or
+.BR \-V .
+.TP
+.B 1
+Start-up failed: could not listen, switch user, or fork.
+.TP
+.B 2
+Bad command line.
+.SH SIGNALS
+.B SIGTERM
+and
+.B SIGINT
+stop the daemon cleanly and end the helper.
+.SH DIAGNOSTICS
+Messages look like this and go to standard error (to the log file under
+.BR \-D ):
+.PP
+.nf
+2026-11-07 13:04:52 [E04] cannot run powershell.exe: No such file or directory
+    why: WSL could not start Windows PowerShell ...
+    try: test it with: powershell.exe -NoProfile -Command 1 ...
+    see: man 8 wsl-dns-forward, section DIAGNOSTICS, entry E04
+.fi
+.PP
+Repeats of the same problem are shown at most once every ten seconds.
+.TP
+.B E01
+Cannot open the listening socket.
+Port 53 needs root; if the port is taken, find who has it with
+.IR "ss -lunp 'sport = :53'" .
+Use
+.B \-p
+to try another port.
+.TP
+.B E02
+The helper script is missing, unreadable or not plain ASCII.
+Reinstall, or set
+.BR WMF_HELPER_SCRIPT .
+.TP
+.B E03
+Out of processes, memory or descriptors while starting the helper.
+.TP
+.B E04
+WSL could not run PowerShell.
+Run
+.I "powershell.exe -NoProfile -Command 1"
+by hand.
+If it fails, interop is probably disabled: look for
+.I enabled=false
+under
+.I [interop]
+in
+.IR /etc/wsl.conf ,
+then restart WSL with
+.I "wsl --shutdown"
+from Windows.
+If PowerShell is in an unusual place, pass
+.BR \-w .
+.TP
+.B E06
+No upstream DNS server is known.
+Pass one with
+.BR \-u ,
+or list your nameservers after
+.I nameserver 127.0.0.1
+in
+.I /etc/resolv.conf
+(the saved copy is
+.IR /etc/resolv.conf.pre-wsl-dns-forward ).
+.TP
+.B E09
+The run user does not exist or could not be switched to.
+Check with
+.IR "id nobody" .
+.TP
+.B E13
+A bad option value (port, upstream address, or an upstream that is the daemon itself).
+.TP
+.B W03
+.I powershell.exe
+was not at the configured path and
+.B PATH
+was used instead.
+Pass
+.B \-w
+to make this permanent and silent.
+.TP
+.B W05
+The Windows helper stopped.
+It is restarted automatically.
+If this repeats, run the helper by hand (the message shows how) to see PowerShell's own error;
+antivirus software or a PowerShell policy can block it.
+.TP
+.B W06
+Windows has no connected adapter with an IPv4 address (reported by the helper).
+Connect to the network.
+.TP
+.B W07
+An upstream DNS server did not answer or cannot be reached.
+Test it with
+.IR "dig @ADDRESS example.com" .
+.TP
+.B W08
+The last-known-good file or its directory cannot be written.
+The daemon still works; it only loses the memory across restarts.
+.TP
+.B W10
+A note about running as or without root.
+.TP
+.B W11
+The log file cannot be opened.
+.TP
+.B W12
+The pid file cannot be written.
+.TP
+.B W15
+No mDNS reply came for a name, so the Windows resolver was tried (reported by the helper).
+The other machine may be off, asleep, on another network, or blocked by a firewall on UDP port 5353.
+Check from Windows with
+.IR "ping NAME" .
+.TP
+.B W16
+The worker process died and the supervisor restarted it.
+Queries in flight at that moment were lost.
+Run the daemon in the foreground, without
+.BR \-D ,
+to see why, and report the messages that precede this one.
+.SH EXAMPLES
+Start in the background, from the WSL boot command:
+.PP
+.RS
+.nf
+wsl-dns-forward \-D \-P /run/wsl-dns-forward.pid
+.fi
+.RE
+.PP
+Test on an unprivileged port without touching resolv.conf:
+.PP
+.RS
+.nf
+wsl-dns-forward \-p 5353
+dig @127.0.0.1 \-p 5353 myprinter.local
+.fi
+.RE
+.PP
+Use a specific upstream and PowerShell location:
+.PP
+.RS
+.nf
+wsl-dns-forward \-D \-u 192.168.1.1 \-w /mnt/d/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+.fi
+.RE
+.SH SECURITY
+mDNS has no authentication: any machine on the local network can claim a
+.I .local
+name, so treat these addresses as only as trustworthy as that network.
+The daemon accepts an address only from a reply whose owner name is the name that was asked,
+and discards loopback, multicast and reserved addresses.
+.PP
+It listens on the loopback address only, answers nobody else, runs as an unprivileged user,
+and passes the helper nothing but names made of letters, digits, hyphens and underscores.
+Replies from the upstream server are accepted only from that server and only when the ID and question match.
+.SH BUGS
+Only IPv4 is answered for
+.I .local
+names.
+DNSSEC data is not produced for those names, and reverse lookups (PTR) and service discovery (SRV, TXT) are not answered.
+Windows must allow
+.I powershell.exe
+to run; an environment that blocks it (some managed or locked-down machines) cannot use this program.
+.PP
+Report problems at https://github.com/moebiusV/wsl-dns-forward/issues.
+.SH SEE ALSO
+.BR resolv.conf (5),
+.BR wsl.conf (5),
+.BR nsswitch.conf (5),
+.BR dig (1),
+.BR ss (8)
+.SH AUTHORS
+David Walther <david@clearbrookdistillery.com>

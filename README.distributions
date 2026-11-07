@@ -1,0 +1,119 @@
+Packaging wsl-dns-forward for distributions
+============================================
+
+Template packaging files are under packaging/ (they are included in the release
+tarball):
+
+  packaging/debian/   Debian, Ubuntu and derivatives (debhelper 13, source format 3.0 quilt)
+  packaging/alpine/   Alpine Linux APKBUILD
+  packaging/arch/     Arch Linux PKGBUILD (installs the daemon to /usr/bin, as Arch merges /usr/sbin)
+  packaging/rpm/      Fedora, RHEL and derivatives
+  packaging/suse/     openSUSE and SUSE Linux Enterprise
+
+What it is
+----------
+A small C program (a DNS server for 127.0.0.1:53) plus one PowerShell script
+that it sends to powershell.exe through WSL interop.  It exists to make .local
+(mDNS) names resolve inside WSL2 on Windows 10.
+
+Build
+-----
+  ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+              [--with-systemdsystemunitdir=/usr/lib/systemd/system]
+  make
+  make check
+  make DESTDIR=... install
+
+The release tarball already contains configure.  From a git checkout run
+"autoreconf -i" first (autoconf and automake are then build dependencies).
+
+Dependencies
+------------
+Build:    a C compiler (C11, with accept4 and pipe2: any glibc or musl), make and awk
+          (configure needs awk; some minimal container images lack it).
+Tests:    dig (Debian: bind9-dnsutils or dnsutils; Fedora/RHEL/SUSE: bind-utils;
+          Alpine: bind-tools).  Without dig the integration test is skipped.
+Runtime:  none beyond libc.  At run time it needs a WSL system with interop
+          enabled and Windows PowerShell on the Windows side.
+
+What gets installed
+-------------------
+  /usr/sbin/wsl-dns-forward
+  /usr/share/wsl-dns-forward/mdns-helper.ps1
+  /usr/share/man/man8/wsl-dns-forward.8
+  optionally the systemd unit wsl-dns-forward.service
+
+Building a package on your own system
+-------------------------------------
+Each distribution family can build its package from the release tarball
+(wsl-dns-forward-1.0.0.tar.gz) on the machine that will use it, including a
+WSL2 distribution.  Run the commands for your family in the directory that holds
+the tarball.
+
+Debian, Ubuntu, Kali and derivatives:
+
+  sudo apt install build-essential debhelper dnsutils
+  cp wsl-dns-forward-1.0.0.tar.gz wsl-dns-forward_1.0.0.orig.tar.gz
+  tar xzf wsl-dns-forward-1.0.0.tar.gz
+  cd wsl-dns-forward-1.0.0 && cp -r packaging/debian debian
+  dpkg-buildpackage -us -uc -b
+  sudo apt install ../wsl-dns-forward_1.0.0-1_*.deb
+
+Fedora, RHEL, Rocky, AlmaLinux, Oracle Linux (use yum instead of dnf on
+Oracle Linux 7):
+
+  sudo dnf install rpm-build gcc make bind-utils systemd-rpm-macros
+  mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
+  cp wsl-dns-forward-1.0.0.tar.gz ~/rpmbuild/SOURCES/
+  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
+      wsl-dns-forward-1.0.0/packaging/rpm/wsl-dns-forward.spec
+  rpmbuild -ba ~/rpmbuild/SPECS/wsl-dns-forward.spec
+  sudo dnf install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.0.0-*.rpm
+
+openSUSE and SUSE Linux Enterprise (same steps, with the SUSE spec file):
+
+  sudo zypper install rpm-build gcc make bind-utils systemd-rpm-macros tar gzip
+  mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
+  cp wsl-dns-forward-1.0.0.tar.gz ~/rpmbuild/SOURCES/
+  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
+      wsl-dns-forward-1.0.0/packaging/suse/wsl-dns-forward.spec
+  rpmbuild -ba ~/rpmbuild/SPECS/wsl-dns-forward.spec
+  sudo zypper install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.0.0-*.rpm
+
+Arch Linux:
+
+  sudo pacman -S --needed base-devel bind
+  mkdir build && cp wsl-dns-forward-1.0.0.tar.gz build/
+  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C build \
+      wsl-dns-forward-1.0.0/packaging/arch/PKGBUILD
+  cd build && makepkg -si
+
+Alpine Linux (as a user in the abuild group, with a signing key from
+"abuild-keygen -a -i"):
+
+  sudo apk add alpine-sdk bind-tools
+  mkdir build && cd build
+  tar xzf ../wsl-dns-forward-1.0.0.tar.gz --strip-components=3 \
+      wsl-dns-forward-1.0.0/packaging/alpine/APKBUILD
+  sudo cp ../wsl-dns-forward-1.0.0.tar.gz /var/cache/distfiles/
+  abuild checksum && abuild -r
+  sudo apk add ~/packages/*/*/wsl-dns-forward-1.0.0-r0.apk
+
+Without a package, "./configure && make && sudo make install" works on all of
+them; see INSTALL.
+
+Packaging policy notes
+----------------------
+* The package must NOT edit /etc/wsl.conf or /etc/resolv.conf in its scripts.
+  Both are administrator decisions, and /etc/resolv.conf is often locked.
+  Point users at README.md (setup) instead; the Debian template does this
+  with README.Debian.
+* Do not enable or start the systemd unit automatically.  The normal WSL setup
+  starts the daemon from the [boot] command in /etc/wsl.conf.
+* The daemon runs as the user "nobody" after opening port 53.  No dedicated
+  user is needed.
+* The cache directory /var/cache/wsl-dns-forward is created by the daemon at
+  start-up.
+* Hardening flags (stack protector, PIE, full RELRO, fortify) are added by
+  configure and respect the distribution's own CFLAGS.
+* The source is plain ASCII C; there are no bundled dependencies.

@@ -1,0 +1,16 @@
+wsl-dns-forward
+================
+
+A DNS forwarder for the loopback address that makes .local (mDNS, Rendezvous,
+Bonjour) host names resolve inside WSL2 on Windows 10, where WSL cannot see
+the multicast traffic mDNS needs.  .local questions are answered through a
+PowerShell helper running in Windows; everything else goes to the normal
+upstream DNS server.
+
+Read README.md for the problem, installation, setup and troubleshooting, and
+wsl-dns-forward(8) for every option, fallback and diagnostic message.
+
+Build:    ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
+          make && make check && sudo make install
+License:  ISC (see COPYING)
+Source:   https://github.com/moebiusV/wsl-dns-forward
