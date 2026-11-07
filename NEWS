@@ -1,5 +1,14 @@
 wsl-dns-forward NEWS: history of user-visible changes
 
+Version 1.1.0 (2026-11-07)
+
+* .local AAAA queries are answered with real IPv6 addresses when the system can route IPv6 (a global address
+  and a default route, as with WSL2 mirrored networking on Windows 11). Where it cannot, as in WSL2 NAT mode
+  on Windows 10, they still get an empty answer, so programs use IPv4 and never see an unreachable address.
+* The Windows helper fetches IPv4 and IPv6 records, skips link-local, multicast and other unusable IPv6
+  addresses, and is asked for IPv4 only when IPv6 is not routable.
+* The last-known-good cache file keeps IPv6 addresses too.
+
 Version 1.0.0 (2026-11-07)
 
 * Answers A queries for .local names through a Windows PowerShell helper that sends mDNS from every real

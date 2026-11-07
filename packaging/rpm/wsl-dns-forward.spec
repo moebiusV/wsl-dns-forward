@@ -1,5 +1,5 @@
 Name:           wsl-dns-forward
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Local DNS forwarder that makes .local (mDNS) names work inside WSL2
 
@@ -47,5 +47,8 @@ make check
 %{_mandir}/man8/%{name}.8*
 
 %changelog
+* Sat Nov 07 2026 David Walther <david@clearbrookdistillery.com> - 1.1.0-1
+- Answer .local AAAA queries when IPv6 is routable
+
 * Sat Nov 07 2026 David Walther <david@clearbrookdistillery.com> - 1.0.0-1
 - Initial package

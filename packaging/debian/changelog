@@ -1,3 +1,10 @@
+wsl-dns-forward (1.1.0-1) unstable; urgency=low
+
+  * New upstream release: .local AAAA queries are answered with IPv6
+    addresses when IPv6 is routable.
+
+ -- David Walther <david@clearbrookdistillery.com>  Sat, 07 Nov 2026 15:30:00 -0800
+
 wsl-dns-forward (1.0.0-1) unstable; urgency=low
 
   * Initial release.

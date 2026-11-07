@@ -8,6 +8,11 @@
 #include <string.h>
 
 static int failures;
+
+static int addr_eq(const struct dns_addrs *x, const struct dns_addrs *y)
+{
+    return x->has4 == y->has4 && x->v4 == y->v4 && x->n6 == y->n6 && memcmp(x->v6, y->v6, 16 * (size_t)x->n6) == 0;
+}
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
 
 /* Build a query for dotted name; returns length. */
@@ -47,7 +52,10 @@ static void test_classify(void)
     CHECK(cls(q, n, &dq, r, &rl) == DNS_LOCAL_A);
     CHECK(strcmp(dq.name, "host.local") == 0);                       /* lowercased */
 
-    n = mkq(q, 7, "host.local", 28, 1);                              /* AAAA: NOERROR, no data */
+    n = mkq(q, 7, "host.local", 28, 1);                              /* AAAA: looked up when IPv6 is usable */
+    CHECK(cls(q, n, &dq, r, &rl) == DNS_LOCAL_AAAA && dq.qtype == 28);
+
+    n = mkq(q, 7, "host.local", 16, 1);                              /* TXT: NOERROR, no data */
     CHECK(cls(q, n, &dq, r, &rl) == DNS_REPLY);
     CHECK((r[3] & 15) == 0 && r[7] == 0 && rl == n && r[0] == 0 && r[1] == 7 && (r[2] & 0x80));
 
@@ -151,28 +159,104 @@ static void test_relay(void)
 static void test_helper_line(void)
 {
     char name[DNS_NAME_MAX];
-    uint32_t ip = 0;
+    struct dns_addrs a;
     int found;
+    static const uint8_t v6a[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
 
-    CHECK(dns_parse_helper_line("host.local 10.1.2.3", name, &ip, &found) && found && ip == htonl(0x0a010203));
-    CHECK(strcmp(name, "host.local") == 0);
-    CHECK(dns_parse_helper_line("host.local 10.1.2.3\r\n", name, &ip, &found) && found);
-    CHECK(dns_parse_helper_line("host.local -", name, &ip, &found) && !found);
-    CHECK(dns_parse_helper_line("host.local 127.0.0.1", name, &ip, &found) && !found);   /* loopback refused */
-    CHECK(dns_parse_helper_line("host.local 0.0.0.0", name, &ip, &found) && !found);
-    CHECK(dns_parse_helper_line("host.local 224.0.0.251", name, &ip, &found) && !found); /* multicast refused */
-    CHECK(dns_parse_helper_line("host.local 255.255.255.255", name, &ip, &found) && !found);
-    CHECK(dns_parse_helper_line("host.local 169.254.1.1", name, &ip, &found) && found);  /* link-local is legitimate */
-    CHECK(!dns_parse_helper_line("host.local 10.1.2", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("host.local 1", name, &ip, &found));                    /* inet_aton-style shorthand */
-    CHECK(!dns_parse_helper_line("host.local 0x7f.1", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("host.local 10.1.2.3 extra", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("host.local 10.1.2.3\nHOST.local 1.1.1.1", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("Host.local 10.1.2.3", name, &ip, &found));              /* must be lowercase */
-    CHECK(!dns_parse_helper_line("example.com 10.1.2.3", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("nospace", name, &ip, &found));
-    CHECK(!dns_parse_helper_line("", name, &ip, &found));
-    CHECK(!dns_parse_helper_line(" 10.1.2.3", name, &ip, &found));
+    CHECK(dns_parse_helper_line("host.local 10.1.2.3", name, &a, &found) && found && a.has4 && a.v4 == htonl(0x0a010203));
+    CHECK(strcmp(name, "host.local") == 0 && a.n6 == 0);
+    CHECK(dns_parse_helper_line("host.local 10.1.2.3\r\n", name, &a, &found) && found);
+    CHECK(dns_parse_helper_line("host.local -", name, &a, &found) && !found && !a.has4 && a.n6 == 0);
+    CHECK(dns_parse_helper_line("host.local 127.0.0.1", name, &a, &found) && !found);        /* loopback refused */
+    CHECK(dns_parse_helper_line("host.local 0.0.0.0", name, &a, &found) && !found);
+    CHECK(dns_parse_helper_line("host.local 224.0.0.251", name, &a, &found) && !found);      /* multicast refused */
+    CHECK(dns_parse_helper_line("host.local 255.255.255.255", name, &a, &found) && !found);
+    CHECK(dns_parse_helper_line("host.local 169.254.1.1", name, &a, &found) && found);       /* link-local is legitimate */
+    CHECK(!dns_parse_helper_line("host.local 10.1.2", name, &a, &found));
+    CHECK(!dns_parse_helper_line("host.local 1", name, &a, &found));                         /* inet_aton-style shorthand */
+    CHECK(!dns_parse_helper_line("host.local 0x7f.1", name, &a, &found));
+    CHECK(!dns_parse_helper_line("host.local 10.1.2.3 extra", name, &a, &found));            /* not an IPv6 list */
+    CHECK(!dns_parse_helper_line("host.local 10.1.2.3\nHOST.local 1.1.1.1", name, &a, &found));
+    CHECK(!dns_parse_helper_line("Host.local 10.1.2.3", name, &a, &found));                  /* must be lowercase */
+    CHECK(!dns_parse_helper_line("example.com 10.1.2.3", name, &a, &found));
+    CHECK(!dns_parse_helper_line("nospace", name, &a, &found));
+    CHECK(!dns_parse_helper_line("", name, &a, &found));
+    CHECK(!dns_parse_helper_line(" 10.1.2.3", name, &a, &found));
+
+    /* IPv6 */
+    CHECK(dns_parse_helper_line("h.local 10.1.2.3 2001:db8::1", name, &a, &found) && found && a.has4 && a.n6 == 1);
+    CHECK(memcmp(a.v6[0], v6a, 16) == 0);
+    CHECK(dns_parse_helper_line("h.local - 2001:db8::1,2001:db8::2\r\n", name, &a, &found) && found && !a.has4 && a.n6 == 2);
+    CHECK(dns_parse_helper_line("h.local - fe80::1,2001:db8::1", name, &a, &found) && found && a.n6 == 1);   /* link-local dropped */
+    CHECK(dns_parse_helper_line("h.local - fe80::1", name, &a, &found) && !found && a.n6 == 0);
+    CHECK(dns_parse_helper_line("h.local - ::1,::,ff02::fb,::ffff:1.2.3.4", name, &a, &found) && !found);  /* all unusable */
+    CHECK(dns_parse_helper_line("h.local - fd00::1", name, &a, &found) && found && a.n6 == 1);            /* ULA is fine */
+    CHECK(dns_parse_helper_line("h.local - 2001:db8::1,2001:db8::2,2001:db8::3,2001:db8::4,2001:db8::5", name, &a, &found)
+          && a.n6 == DNS_MAXV6);                                                                  /* capped, not an error */
+    CHECK(!dns_parse_helper_line("h.local - 2001:db8::zz", name, &a, &found));
+    CHECK(!dns_parse_helper_line("h.local - 2001:db8::1 junk", name, &a, &found));
+    CHECK(!dns_parse_helper_line("h.local 10.1.2.3 ", name, &a, &found));                       /* empty IPv6 field */
+}
+
+static void test_local_build(void)
+{
+    uint8_t q[100], r[512];
+    char text[300];
+    struct dns_addrs a, b;
+    int found;
+    size_t n = mkq(q, 0x1234, "host.local", 28, 1), rl;
+
+    CHECK(dns_parse_helper_line("host.local 10.1.2.3 2001:db8::1,2001:db8::2", text, &a, &found) && found);
+    rl = dns_build_local(q, n, 28, &a, r, sizeof r);
+    CHECK(rl == n + 2 * 28 && r[7] == 2 && (r[3] & 15) == 0 && r[0] == 0x12);
+    CHECK(r[n + 3] == 28 && r[n + 11] == 16 && r[n + 12] == 0x20 && r[n + 13] == 0x01);      /* type AAAA, rdlen 16 */
+    CHECK(dns_valid_relay_reply(q, n, r, rl));
+    n = mkq(q, 0x1234, "host.local", 1, 1);
+    rl = dns_build_local(q, n, 1, &a, r, sizeof r);                                           /* A from a dual-stack set */
+    CHECK(rl == n + 16 && r[7] == 1);
+    memset(&b, 0, sizeof b);                                                                  /* nothing of the kind: no data */
+    rl = dns_build_local(q, n, 1, &b, r, sizeof r);
+    CHECK(rl == n && r[7] == 0 && (r[3] & 15) == 0);
+    n = mkq(q, 1, "h.local", 28, 1);
+    b = a; b.has4 = 1; b.n6 = 0;
+    rl = dns_build_local(q, n, 28, &b, r, sizeof r);                                          /* IPv4 only host asked for AAAA */
+    CHECK(rl == n && r[7] == 0);
+    CHECK(dns_build_local(q, n, 28, &a, r, n + 10) == 0);                                     /* does not fit */
+
+    CHECK(dns_format_addrs("h.local", &a, text, sizeof text) > 0);
+    CHECK(strcmp(text, "h.local 10.1.2.3 2001:db8::1,2001:db8::2") == 0);
+    CHECK(dns_parse_helper_line(text, text + 100, &b, &found) && found && addr_eq(&a, &b));    /* round trip */
+    b.has4 = 0;
+    CHECK(dns_format_addrs("h.local", &b, text, sizeof text) > 0 && strcmp(text, "h.local - 2001:db8::1,2001:db8::2") == 0);
+    CHECK(dns_format_addrs("h.local", &a, text, 8) == 0);                                     /* too small */
+}
+
+static void test_ipv6_usable(void)
+{
+    static const char nat_addrs[] = "fe8000000000000002155dfffed13fcc 02 40 20 80     eth0\n"
+                                    "00000000000000000000000000000001 01 80 10 80       lo\n";
+    static const char nat_routes[] = "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 "
+                                     "00000000000000000000000000000000 00000100 00000000 00000000 00000001     eth0\n"
+                                     "00000000000000000000000000000001 80 00000000000000000000000000000000 00 "
+                                     "00000000000000000000000000000000 00000000 00000002 00000000 80200001       lo\n";
+    static const char mir_addrs[] = "20010db8000000000000000000000042 02 40 00 80     eth0\n"
+                                    "fe8000000000000002155dfffed13fcc 02 40 20 80     eth0\n";
+    static const char mir_routes[] = "20010db8000000000000000000000000 40 00000000000000000000000000000000 00 "
+                                     "00000000000000000000000000000000 00000100 00000000 00000000 00000001     eth0\n"
+                                     "00000000000000000000000000000000 00 00000000000000000000000000000000 00 "
+                                     "fe800000000000000000000000000001 00000064 00000001 00000000 00000003     eth0\n";
+    static const char reject_routes[] = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 "
+                                        "00000000000000000000000000000000 ffffffff 00000001 00000000 00200200      lo\n";
+
+    CHECK(!dns_ipv6_usable(nat_addrs, nat_routes));                  /* WSL2 NAT: link-local only, no default route */
+    CHECK(dns_ipv6_usable(mir_addrs, mir_routes));                   /* a global address and a default route */
+    CHECK(!dns_ipv6_usable(mir_addrs, nat_routes));                  /* address but no default route */
+    CHECK(!dns_ipv6_usable(nat_addrs, mir_routes));                  /* default route but only a link-local address */
+    CHECK(!dns_ipv6_usable(mir_addrs, reject_routes));               /* a reject route on lo is not connectivity */
+    CHECK(!dns_ipv6_usable("20010db8000000000000000000000042 02 40 00 80 lo\n", mir_routes));   /* global on loopback */
+    CHECK(!dns_ipv6_usable("20010db8000000000000000000000042 02 40 00 40 eth0\n", mir_routes));  /* tentative address */
+    CHECK(!dns_ipv6_usable("", ""));
+    CHECK(!dns_ipv6_usable("garbage\n\n   \n", "more garbage"));
 }
 
 static void test_names(void)
@@ -210,6 +294,8 @@ int main(void)
     test_build();
     test_relay();
     test_helper_line();
+    test_local_build();
+    test_ipv6_usable();
     test_names();
     test_resolv();
     if (failures)

@@ -1,5 +1,11 @@
 2026-11-07  David Walther  <david@clearbrookdistillery.com>
 
+	* Release 1.1.0.  .local AAAA queries are answered with IPv6 addresses when
+	IPv6 is routable (dns.c: dns_ipv6_usable, dns_build_local; main.c:
+	ipv6_usable; mdns-helper.ps1 fetches AAAA records).
+
+2026-11-07  David Walther  <david@clearbrookdistillery.com>
+
 	* Release 1.0.0.  First public version: dns.c (packet logic), main.c
 	(event loop, helper management, privilege drop), mdns-helper.ps1 (Windows
 	side), unit tests, libFuzzer targets, integration test, man page, and

@@ -46,46 +46,46 @@ What gets installed
 Building a package on your own system
 -------------------------------------
 Each distribution family can build its package from the release tarball
-(wsl-dns-forward-1.0.0.tar.gz) on the machine that will use it, including a
+(wsl-dns-forward-1.1.0.tar.gz) on the machine that will use it, including a
 WSL2 distribution.  Run the commands for your family in the directory that holds
 the tarball.
 
 Debian, Ubuntu, Kali and derivatives:
 
   sudo apt install build-essential debhelper dnsutils
-  cp wsl-dns-forward-1.0.0.tar.gz wsl-dns-forward_1.0.0.orig.tar.gz
-  tar xzf wsl-dns-forward-1.0.0.tar.gz
-  cd wsl-dns-forward-1.0.0 && cp -r packaging/debian debian
+  cp wsl-dns-forward-1.1.0.tar.gz wsl-dns-forward_1.1.0.orig.tar.gz
+  tar xzf wsl-dns-forward-1.1.0.tar.gz
+  cd wsl-dns-forward-1.1.0 && cp -r packaging/debian debian
   dpkg-buildpackage -us -uc -b
-  sudo apt install ../wsl-dns-forward_1.0.0-1_*.deb
+  sudo apt install ../wsl-dns-forward_1.1.0-1_*.deb
 
 Fedora, RHEL, Rocky, AlmaLinux, Oracle Linux (use yum instead of dnf on
 Oracle Linux 7):
 
   sudo dnf install rpm-build gcc make bind-utils systemd-rpm-macros
   mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
-  cp wsl-dns-forward-1.0.0.tar.gz ~/rpmbuild/SOURCES/
-  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
-      wsl-dns-forward-1.0.0/packaging/rpm/wsl-dns-forward.spec
+  cp wsl-dns-forward-1.1.0.tar.gz ~/rpmbuild/SOURCES/
+  tar xzf wsl-dns-forward-1.1.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
+      wsl-dns-forward-1.1.0/packaging/rpm/wsl-dns-forward.spec
   rpmbuild -ba ~/rpmbuild/SPECS/wsl-dns-forward.spec
-  sudo dnf install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.0.0-*.rpm
+  sudo dnf install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.1.0-*.rpm
 
 openSUSE and SUSE Linux Enterprise (same steps, with the SUSE spec file):
 
   sudo zypper install rpm-build gcc make bind-utils systemd-rpm-macros tar gzip
   mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS
-  cp wsl-dns-forward-1.0.0.tar.gz ~/rpmbuild/SOURCES/
-  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
-      wsl-dns-forward-1.0.0/packaging/suse/wsl-dns-forward.spec
+  cp wsl-dns-forward-1.1.0.tar.gz ~/rpmbuild/SOURCES/
+  tar xzf wsl-dns-forward-1.1.0.tar.gz --strip-components=3 -C ~/rpmbuild/SPECS \
+      wsl-dns-forward-1.1.0/packaging/suse/wsl-dns-forward.spec
   rpmbuild -ba ~/rpmbuild/SPECS/wsl-dns-forward.spec
-  sudo zypper install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.0.0-*.rpm
+  sudo zypper install ~/rpmbuild/RPMS/*/wsl-dns-forward-1.1.0-*.rpm
 
 Arch Linux:
 
   sudo pacman -S --needed base-devel bind
-  mkdir build && cp wsl-dns-forward-1.0.0.tar.gz build/
-  tar xzf wsl-dns-forward-1.0.0.tar.gz --strip-components=3 -C build \
-      wsl-dns-forward-1.0.0/packaging/arch/PKGBUILD
+  mkdir build && cp wsl-dns-forward-1.1.0.tar.gz build/
+  tar xzf wsl-dns-forward-1.1.0.tar.gz --strip-components=3 -C build \
+      wsl-dns-forward-1.1.0/packaging/arch/PKGBUILD
   cd build && makepkg -si
 
 Alpine Linux (as a user in the abuild group, with a signing key from
@@ -93,11 +93,11 @@ Alpine Linux (as a user in the abuild group, with a signing key from
 
   sudo apk add alpine-sdk bind-tools
   mkdir build && cd build
-  tar xzf ../wsl-dns-forward-1.0.0.tar.gz --strip-components=3 \
-      wsl-dns-forward-1.0.0/packaging/alpine/APKBUILD
-  sudo cp ../wsl-dns-forward-1.0.0.tar.gz /var/cache/distfiles/
+  tar xzf ../wsl-dns-forward-1.1.0.tar.gz --strip-components=3 \
+      wsl-dns-forward-1.1.0/packaging/alpine/APKBUILD
+  sudo cp ../wsl-dns-forward-1.1.0.tar.gz /var/cache/distfiles/
   abuild checksum && abuild -r
-  sudo apk add ~/packages/*/*/wsl-dns-forward-1.0.0-r0.apk
+  sudo apk add ~/packages/*/*/wsl-dns-forward-1.1.0-r0.apk
 
 Without a package, "./configure && make && sudo make install" works on all of
 them; see INSTALL.

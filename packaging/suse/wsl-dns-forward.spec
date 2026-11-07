@@ -1,5 +1,5 @@
 Name:           wsl-dns-forward
-Version:        1.0.0
+Version:        1.1.0
 Release:        0
 Summary:        Local DNS forwarder that makes .local (mDNS) names work inside WSL2
 License:        ISC

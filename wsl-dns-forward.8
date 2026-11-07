@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: ISC
 .\" Copyright (c) 2026 David Walther <david@clearbrookdistillery.com>
-.TH WSL-DNS-FORWARD 8 "November 7, 2026" "wsl-dns-forward 1.0.0" "System Administration"
+.TH WSL-DNS-FORWARD 8 "November 7, 2026" "wsl-dns-forward 1.1.0" "System Administration"
 .SH NAME
 wsl-dns-forward \- make .local (mDNS) host names resolve inside WSL2
 .SH SYNOPSIS
@@ -139,10 +139,14 @@ is known and up to six otherwise, so a device whose address changed is not answe
 .IP \(bu 3
 AAAA (IPv6) queries for
 .I .local
-names are answered with an empty, successful reply.
-WSL2 has no IPv6 route to the LAN, and an IPv6 address would give "Network is unreachable";
-the empty answer makes programs use IPv4 at once.
-Other record types get the same empty reply.
+names are answered with the device's global IPv6 addresses (up to four) when the system can route IPv6, that
+is, when it has a global-scope IPv6 address and an IPv6 default route, as WSL2 has in mirrored networking mode.
+Link-local, multicast, loopback and IPv4-mapped addresses are never returned.
+Otherwise, as in WSL2 NAT mode, which has no IPv6 route to the LAN, the answer is empty and successful, because
+an IPv6 address would only give "Network is unreachable"; the empty answer makes programs use IPv4 at once.
+The check is repeated every few seconds, and the daemon logs which mode it is in.
+A host with only IPv4 addresses gets an empty AAAA answer, and a host with only IPv6 addresses gets an empty A answer.
+Other record types get an empty answer as well.
 .IP \(bu 3
 .I .local
 names may contain only letters, digits, hyphens and underscores.
@@ -273,6 +277,9 @@ makes WSL share Windows' loopback address, so port 53 must be free on the Window
 Otherwise
 .B E01
 is reported.
+It also gives WSL IPv6 routing, so the daemon then answers
+.I .local
+AAAA queries with IPv6 addresses.
 .SS Stopping use of the program
 To let Windows 11 manage DNS itself, remove the
 .B [boot]
@@ -317,6 +324,12 @@ first.
 .I /etc/wsl.conf
 Where to start the daemon at boot, and where DNS generation is turned off.
 .SH ENVIRONMENT
+.TP
+.B WMF_IPV6
+.B 0
+or
+.B 1
+forces IPv6 answers off or on, overriding the detection described under OPERATION.
 .TP
 .B WMF_HELPER_SCRIPT
 Use this helper script instead of the installed one.
@@ -372,7 +385,8 @@ Use
 to try another port.
 .TP
 .B E02
-The helper script is missing, unreadable or not plain ASCII.
+The helper script is missing, unreadable, not plain ASCII, or longer than 11000 characters once comments and
+indentation are stripped (it travels on the Windows command line, which is limited to 32767 characters).
 Reinstall, or set
 .BR WMF_HELPER_SCRIPT .
 .TP
@@ -500,7 +514,7 @@ It listens on the loopback address only, answers nobody else, runs as an unprivi
 and passes the helper nothing but names made of letters, digits, hyphens and underscores.
 Replies from the upstream server are accepted only from that server and only when the ID and question match.
 .SH BUGS
-Only IPv4 is answered for
+Only A and AAAA records are answered for
 .I .local
 names.
 DNSSEC data is not produced for those names, and reverse lookups (PTR) and service discovery (SRV, TXT) are not answered.

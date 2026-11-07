@@ -27,7 +27,7 @@ replay_query_SOURCES = fuzz/fuzz_query.c fuzz/replay.c dns.c dns.h
 replay_relay_SOURCES = fuzz/fuzz_relay.c fuzz/replay.c dns.c dns.h
 replay_helper_SOURCES = fuzz/fuzz_helper.c fuzz/replay.c dns.c dns.h
 
-TESTS = test_dns tests/corpus.sh tests/check.sh
+TESTS = test_dns tests/corpus.sh tests/helper-size.sh tests/check.sh
 TESTS_ENVIRONMENT = WMF_BIN=$(abs_builddir)/wsl-dns-forward FAKEUP=$(abs_builddir)/fakeup \
 	REPLAY_DIR=$(abs_builddir) CORPUS_DIR=$(abs_srcdir)/fuzz/corpus; export WMF_BIN FAKEUP REPLAY_DIR CORPUS_DIR;
 
@@ -48,7 +48,7 @@ fuzz_relay_LDFLAGS = $(FUZZ_CFLAGS)
 fuzz_helper_LDFLAGS = $(FUZZ_CFLAGS)
 endif
 
-EXTRA_DIST = README.md README.distributions tests/check.sh tests/corpus.sh tests/fake-helper.sh \
+EXTRA_DIST = README.md README.distributions tests/check.sh tests/corpus.sh tests/fake-helper.sh tests/helper-size.sh \
 	fuzz/corpus packaging wsl-dns-forward.service.in
 
 .PHONY: check-valgrind

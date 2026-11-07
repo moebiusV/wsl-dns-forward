@@ -46,7 +46,7 @@
 #define TCP_TIMEOUT_MS 5000L
 #define BACKOFF_MIN_MS 500L
 #define BACKOFF_MAX_MS 30000L
-#define SCRIPT_MAX 24000            /* keep the powershell command line under the 32 KB limit */
+#define SCRIPT_CHARS_MAX 11000      /* minified script: 11000 chars encode to about 29 KB, under the 32767 limit */
 
 #ifndef PKGDATADIR
 #define PKGDATADIR "/usr/local/share/wsl-dns-forward"
@@ -138,7 +138,7 @@ static long now_ms(void)
 
 struct entry {
     char name[DNS_NAME_MAX];
-    uint32_t ip;                /* network order */
+    struct dns_addrs a;
     long when;                  /* monotonic ms of the last successful lookup; 0 = loaded from disk */
 };
 static struct entry cache[NCACHE];
@@ -175,10 +175,10 @@ static void cache_save(void)
         return;
     }
     for (int i = 0; i < ncache; i++) {
-        char ip[INET_ADDRSTRLEN];
-        struct in_addr a = { cache[i].ip };
-        if (inet_ntop(AF_INET, &a, ip, sizeof ip))
-            fprintf(f, "%s %s\n", cache[i].name, ip);
+        char text[512];
+
+        if (dns_format_addrs(cache[i].name, &cache[i].a, text, sizeof text))
+            fprintf(f, "%s\n", text);
     }
     fflush(f);
     fsync(fileno(f));
@@ -191,7 +191,12 @@ static void cache_save(void)
     unlink(tmp);
 }
 
-static void cache_put(const char *name, uint32_t ip)
+static int addrs_equal(const struct dns_addrs *x, const struct dns_addrs *y)
+{
+    return x->has4 == y->has4 && x->v4 == y->v4 && x->n6 == y->n6 && memcmp(x->v6, y->v6, 16 * (size_t)x->n6) == 0;
+}
+
+static void cache_put(const char *name, const struct dns_addrs *a)
 {
     struct entry *e = cache_find(name);
     int changed = 0;
@@ -204,10 +209,10 @@ static void cache_put(const char *name, uint32_t ip)
         e = &cache[ncache++];
         snprintf(e->name, sizeof e->name, "%s", name);
         changed = 1;
-    } else if (e->ip != ip) {
+    } else if (!addrs_equal(&e->a, a)) {
         changed = 1;
     }
-    e->ip = ip;
+    e->a = *a;
     e->when = now_ms();
     if (changed)
         cache_save();
@@ -222,12 +227,12 @@ static void cache_load(void)
         return;
     while (ncache < NCACHE && fgets(line, sizeof line, f)) {
         char name[DNS_NAME_MAX];
-        uint32_t ip;
+        struct dns_addrs a;
         int found;
 
-        if (dns_parse_helper_line(line, name, &ip, &found) && found) {
+        if (dns_parse_helper_line(line, name, &a, &found) && found) {
             snprintf(cache[ncache].name, sizeof cache[ncache].name, "%s", name);
-            cache[ncache].ip = ip;
+            cache[ncache].a = a;
             cache[ncache].when = 0;             /* from disk: stale until refreshed */
             ncache++;
         }
@@ -248,31 +253,50 @@ static struct {
 
 static const char b64t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/* powershell -EncodedCommand takes base64 of the UTF-16LE script text. */
+/*
+ * powershell -EncodedCommand takes base64 of the UTF-16LE script text, and the whole Windows command line is
+ * limited to 32767 characters, so the script is sent without comments, blank lines or indentation.  The
+ * encoded form must stay under SCRIPT_ENC_MAX; tests/helper-size.sh checks the shipped script against that.
+ */
 static char *encode_script(const char *path)
 {
     FILE *f = fopen(path, "re");
     uint8_t *u16;
-    char *out, *p;
+    char *out, *p, line[1024];
     size_t n = 0, bytes;
-    int c;
 
     if (!f)
         return NULL;
-    u16 = malloc(SCRIPT_MAX * 2);
+    u16 = malloc(SCRIPT_CHARS_MAX * 2);
     if (!u16) {
         fclose(f);
         return NULL;
     }
-    while ((c = fgetc(f)) != EOF) {
-        if (c == '\r')
+    while (fgets(line, sizeof line, f)) {
+        char *b = line, *e = line + strlen(line);
+
+        while (e > b && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ' || e[-1] == '\t'))
+            e--;
+        while (b < e && (*b == ' ' || *b == '\t'))
+            b++;
+        if (b == e || *b == '#')                        /* blank line or comment */
             continue;
-        if (n >= SCRIPT_MAX / 3 || c > 127) {   /* too large, or not plain ASCII */
+        if (e - b > 1000 || n + (size_t)(e - b) + 1 > SCRIPT_CHARS_MAX) {
             fclose(f);
             free(u16);
-            return NULL;
+            return NULL;                                /* too large */
         }
-        u16[2 * n] = (uint8_t)c;
+        for (; b < e; b++) {
+            if ((unsigned char)*b > 127) {              /* not plain ASCII */
+                fclose(f);
+                free(u16);
+                return NULL;
+            }
+            u16[2 * n] = (uint8_t)*b;
+            u16[2 * n + 1] = 0;
+            n++;
+        }
+        u16[2 * n] = '\n';
         u16[2 * n + 1] = 0;
         n++;
     }
@@ -397,8 +421,8 @@ struct job {
     size_t reqlen;
     struct dns_query q;
     int waiting;                /* 1: waiting on the helper; 0: relaying to an upstream */
-    int has_stale;              /* an older address is known and is used if the lookup fails */
-    uint32_t stale_ip;
+    int has_stale;              /* older addresses are known and are used if the lookup fails */
+    struct dns_addrs stale;
     int sock;
     int up;
     long deadline;
@@ -479,7 +503,7 @@ static void job_stale_or_fail(struct job *j)
 {
     if (j->has_stale) {
         uint8_t resp[MAXPKT];
-        size_t n = dns_build_a(j->req, j->q.qend, j->stale_ip, resp, sizeof resp);
+        size_t n = dns_build_local(j->req, j->q.qend, j->q.qtype, &j->stale, resp, sizeof resp);
 
         job_done(j, resp, n);
     } else {
@@ -536,11 +560,55 @@ static int relay_try(struct job *j)
     return 0;
 }
 
-/* Ask the helper about name (one outstanding request per name).  Returns 0 on failure. */
-static int want_add(const char *name)
+static size_t read_file(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "re");
+    size_t n = 0;
+
+    if (f) {
+        n = fread(buf, 1, cap - 1, f);
+        fclose(f);
+    }
+    buf[n] = '\0';
+    return n;
+}
+
+/*
+ * Can this system route IPv6?  WSL2 in NAT mode has only link-local addresses and no default route, so an
+ * IPv6 answer would only make programs fail with "Network is unreachable".  Mirrored networking has both,
+ * and then real IPv6 addresses are returned.  Re-checked every few seconds; WMF_IPV6=0|1 forces the answer.
+ */
+static int ipv6_usable(void)
+{
+    static long checked;
+    static int cached = -1, announced = -1;
+    const char *force = getenv("WMF_IPV6");
+    long now = now_ms();
+
+    if (force && (force[0] == '0' || force[0] == '1')) {
+        cached = force[0] == '1';
+    } else if (cached < 0 || now - checked >= 3000) {
+        static char addrs[16384], routes[65536];
+
+        read_file("/proc/net/if_inet6", addrs, sizeof addrs);
+        read_file("/proc/net/ipv6_route", routes, sizeof routes);
+        cached = dns_ipv6_usable(addrs, routes);
+        checked = now;
+    }
+    if (cached != announced) {
+        announced = cached;
+        logmsg(cached ? "IPv6 is routable here: .local AAAA queries are answered with IPv6 addresses"
+                      : "IPv6 is not routable here (no global address or default route): .local AAAA queries get "
+                        "an empty answer so programs use IPv4");
+    }
+    return cached;
+}
+
+/* Ask the helper about name (one outstanding request per name).  want6 also asks for IPv6 addresses. */
+static int want_add(const char *name, int want6)
 {
     struct want *w = NULL;
-    char line[DNS_NAME_MAX + 2];
+    char line[DNS_NAME_MAX + 6];
     int n;
 
     for (int i = 0; i < MAXWANT; i++) {
@@ -553,7 +621,7 @@ static int want_add(const char *name)
         return 0;
     if (H.pid < 0 && helper_start() < 0)
         return 0;
-    n = snprintf(line, sizeof line, "%s\n", name);
+    n = snprintf(line, sizeof line, "%s %s\n", name, want6 ? "46" : "4");
     if (n < 0 || write(H.in, line, (size_t)n) != n) {
         helper_stop();
         return 0;
@@ -564,14 +632,14 @@ static int want_add(const char *name)
     return 1;
 }
 
-static void want_done(struct want *w, uint32_t ip, int found)
+static void want_done(struct want *w, const struct dns_addrs *a, int found)
 {
     char name[DNS_NAME_MAX];
 
     snprintf(name, sizeof name, "%s", w->name);
     w->used = 0;
     if (found)
-        cache_put(name, ip);
+        cache_put(name, a);
     else if (cache_find(name))
         logmsg("lookup of %s failed; keeping the last-known-good address", name);
     else
@@ -583,7 +651,7 @@ static void want_done(struct want *w, uint32_t ip, int found)
             continue;
         if (found) {
             uint8_t resp[MAXPKT];
-            size_t n = dns_build_a(j->req, j->q.qend, ip, resp, sizeof resp);
+            size_t n = dns_build_local(j->req, j->q.qend, j->q.qtype, a, resp, sizeof resp);
 
             job_done(j, resp, n);
         } else {
@@ -594,23 +662,25 @@ static void want_done(struct want *w, uint32_t ip, int found)
 
 static void wants_fail_all(void)
 {
+    static const struct dns_addrs none;
+
     for (int i = 0; i < MAXWANT; i++)
         if (wants[i].used)
-            want_done(&wants[i], 0, 0);
+            want_done(&wants[i], &none, 0);
 }
 
 static void handle_helper_line(const char *line)
 {
     char name[DNS_NAME_MAX];
-    uint32_t ip = 0;
+    struct dns_addrs a;
     int found;
 
-    if (!dns_parse_helper_line(line, name, &ip, &found))
+    if (!dns_parse_helper_line(line, name, &a, &found))
         return;
     for (int i = 0; i < MAXWANT; i++) {
         if (wants[i].used && strcmp(wants[i].name, name) == 0) {
             H.backoff = BACKOFF_MIN_MS;
-            want_done(&wants[i], ip, found);
+            want_done(&wants[i], &a, found);
             return;
         }
     }
@@ -687,6 +757,13 @@ static void handle_query(const uint8_t *buf, size_t n, int tcp, const struct soc
         if (!relay_try(j))
             job_servfail(j);
         return;
+    case DNS_LOCAL_AAAA:
+        if (!ipv6_usable()) {                   /* no IPv6 route: answer with no data, so programs use IPv4 */
+            rl = dns_build_reply(buf, q.qend, DNS_RCODE_NOERROR, resp, sizeof resp);
+            send_reply(tcp, from, resp, rl);
+            return;
+        }
+        break;
     case DNS_LOCAL_A:
         break;
     }
@@ -696,10 +773,10 @@ static void handle_query(const uint8_t *buf, size_t n, int tcp, const struct soc
         long age = now_ms() - e->when;
 
         if (age < fresh_ms) {                   /* fresh: answer now, and refresh before it expires */
-            rl = dns_build_a(buf, q.qend, e->ip, resp, sizeof resp);
+            rl = dns_build_local(buf, q.qend, q.qtype, &e->a, resp, sizeof resp);
             send_reply(tcp, from, resp, rl);
             if (age >= fresh_ms / 4 * 3)
-                want_add(q.name);
+                want_add(q.name, ipv6_usable());
             return;
         }
     }
@@ -708,7 +785,7 @@ static void handle_query(const uint8_t *buf, size_t n, int tcp, const struct soc
     j = job_alloc();
     if (!j) {
         if (e)
-            rl = dns_build_a(buf, q.qend, e->ip, resp, sizeof resp);
+            rl = dns_build_local(buf, q.qend, q.qtype, &e->a, resp, sizeof resp);
         else
             rl = dns_build_reply(buf, q.qend, DNS_RCODE_SERVFAIL, resp, sizeof resp);
         send_reply(tcp, from, resp, rl);
@@ -722,11 +799,12 @@ static void handle_query(const uint8_t *buf, size_t n, int tcp, const struct soc
     j->q = q;
     j->waiting = 1;
     j->has_stale = e != NULL;
-    j->stale_ip = e ? e->ip : 0;
+    if (e)
+        j->stale = e->a;
     j->deadline = now_ms() + (e ? STALE_WAIT_MS : HELPER_TIMEOUT_MS);
     if (tcp >= 0)
         conns[tcp].busy = 1;
-    if (!want_add(q.name))
+    if (!want_add(q.name, ipv6_usable()))
         job_stale_or_fail(j);
 }
 
@@ -852,6 +930,7 @@ static void job_readable(struct job *j)
 
 static void sweep_timers(void)
 {
+    static const struct dns_addrs none_addrs;
     long now = now_ms();
 
     for (int i = 0; i < MAXTCP; i++)
@@ -863,7 +942,7 @@ static void sweep_timers(void)
         }
     for (int i = 0; i < MAXWANT; i++)
         if (wants[i].used && now >= wants[i].deadline)
-            want_done(&wants[i], 0, 0);
+            want_done(&wants[i], &none_addrs, 0);
     for (int i = 0; i < MAXJOB; i++) {
         struct job *j = &jobs[i];
 
@@ -1142,6 +1221,7 @@ static int run_worker(void)
     for (int i = 0; i < nup; i++)
         logmsg("upstream %d: %s:%d%s", i + 1, inet_ntoa(upstream[i].sin_addr), ntohs(upstream[i].sin_port),
                up_auto ? " (discovered)" : "");
+    ipv6_usable();                                      /* logs whether .local AAAA answers are enabled */
     run_loop();
     logmsg("stopping");
     helper_stop();

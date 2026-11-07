@@ -1,5 +1,7 @@
 # wsl-dns-forward
 
+[github.com/moebiusV/wsl-dns-forward](https://github.com/moebiusV/wsl-dns-forward) | `git clone https://github.com/moebiusV/wsl-dns-forward`
+
 Rendezvous (also called mDNS or Bonjour) lets computers, printers and other devices on a local network be
 reached by a name ending in `.local`, such as `printer.local`, with no DNS server to set up.
 
@@ -51,7 +53,9 @@ network, and it accepts a reply only if the reply names the host that was asked 
 
 The daemon also:
 
-* answers IPv6 (AAAA) questions for `.local` with an empty reply, so programs go straight to IPv4;
+* answers IPv6 (AAAA) questions with real IPv6 addresses when the system can route IPv6 (WSL2 mirrored
+  networking), and with an empty reply when it cannot (WSL2 NAT mode), so programs never receive an address
+  they cannot reach;
 * remembers the last good address of each name, and refreshes names before they expire;
 * keeps one slow lookup from holding up the others.
 
@@ -72,11 +76,12 @@ Windows 11 is covered in "Windows 11" and "Upgrading from Windows 10 to Windows 
 ## Tested distributions
 
 Every distribution in `wsl --list --online` was checked, plus Alpine, which can be imported with `wsl --import`.
-Each was built from the release tarball in the distribution's official container image: `./configure`,
-`make`, `make check` (unit tests, fuzz-corpus replay and an integration test) and `make install`, with zero
-compiler warnings. The first five rows also have a native package that was built and tested. Two entries were
-not built separately: eLxr (Debian based, with no public container image) and SUSE Linux Enterprise 15 SP6
-(the SP7 image has the same code base). The tests ran in container images, not inside WSL itself.
+The table records the results for the 1.0.0 release tarball. Each distribution built it in its official
+container image: `./configure`, `make`, `make check` (unit tests, fuzz-corpus replay and an integration
+test) and `make install`, with zero compiler warnings. The first five rows also have a native package that was
+built and tested. Two entries were not built separately: eLxr (Debian based, with no public container image)
+and SUSE Linux Enterprise 15 SP6 (the SP7 image has the same code base). The tests ran in container images, not
+inside WSL itself.
 
 | Distribution | WSL name | Package | Native package | Source build, tests, install | Compiler |
 | --- | --- | --- | --- | --- | --- |
@@ -113,15 +118,16 @@ packages are installed with the commands in `README.distributions`.
 ### From a release tarball
 
 ```sh
-tar xzf wsl-dns-forward-1.0.0.tar.gz
-cd wsl-dns-forward-1.0.0
+tar xzf wsl-dns-forward-1.1.0.tar.gz
+cd wsl-dns-forward-1.1.0
 ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
 make
 make check
 sudo make install
 ```
 
-From a git checkout, run `autoreconf -i` before `./configure`.
+From a git checkout (`git clone https://github.com/moebiusV/wsl-dns-forward`), run `autoreconf -i` before
+`./configure`.
 
 If `powershell.exe` is not under `/mnt/c/Windows/...` on your system, give its path at build time with
 `./configure --with-powershell=/path/to/powershell.exe`, or at run time with `-w`.
@@ -225,6 +231,11 @@ an edit on the Linux side:
   background before it expires. After that the name is looked up again before it is answered, so a device
   whose address changed is never answered with the old one. The previous address is returned only when the
   lookup fails.
+* **IPv6 is detected, not configured.** Every few seconds the daemon checks whether the system has a global
+  IPv6 address and an IPv6 default route. If it does, as with WSL2 mirrored networking, `.local` AAAA
+  questions are answered with the device's real IPv6 addresses. If not, as in WSL2 NAT mode, they get an empty
+  answer and programs use IPv4. A change of networking mode, or an upgrade, switches behaviour by itself, and
+  the log says which mode is in use.
 * **The configuration lives in the Linux distribution.** `/etc/wsl.conf` and `/etc/resolv.conf` stay as they
   are across Windows upgrades and `wsl --update`. Nothing in them depends on a Windows or WSL version.
 * **Nothing is changed behind your back.** Packages never edit `/etc/wsl.conf` or `/etc/resolv.conf`. The
@@ -243,7 +254,8 @@ written to accommodate them:
 * With DNS tunneling on, DNS from WSL goes to the virtual address `10.255.255.254`, and the WSL gateway no
   longer proxies DNS. The daemon does not depend on the gateway; see the first item above.
 * In mirrored mode WSL shares Windows' loopback address, so port 53 must be free on the Windows side. It
-  normally is. A clash is reported as `[E01]`.
+  normally is. A clash is reported as `[E01]`. Mirrored mode also gives WSL IPv6 routing, so the daemon then
+  returns IPv6 addresses for `.local` names as well.
 * `[boot]` is supported.
 * The Windows half is standard Windows PowerShell 5.1 and .NET sockets.
 
@@ -306,6 +318,7 @@ is explained in the DIAGNOSTICS section of `man 8 wsl-dns-forward`.
 | Daemon not running after a restart | WSL ignores the `[boot]` line | `wsl --update`, or start it from Windows as shown in Setup step 2 |
 | `.local` fails though the daemon runs | `/etc/nsswitch.conf` has an `mdns` entry that ends the search early | Make the line `hosts: files dns`; remove `libnss-mdns` if it is not needed |
 | Nothing resolves | `/etc/resolv.conf` points at the daemon and it is not running | `pgrep -a wsl-dns-forward`; read the log; run it without `-D` to see its messages |
+| `Network is unreachable` on a `.local` name | The program was given an IPv6 address this system cannot route | The log line "IPv6 is not routable here" shows the daemon is withholding IPv6 addresses; if it says "routable" and connections still fail, check `ip -6 route` |
 | Ordinary names are slow | The daemon is down and programs wait before trying the next nameserver | Start it, or see `[W07]` |
 
 To watch the daemon work, run it in the foreground (`sudo wsl-dns-forward`) and query it from another
@@ -334,7 +347,7 @@ Type a name such as `printer.local` and press Enter. It prints the name and the 
 
 ## Limitations
 
-* Only IPv4 `A` records are answered for `.local` names. Reverse lookups and service discovery (PTR, SRV, TXT)
+* Only `A` and `AAAA` records are answered for `.local` names. Reverse lookups and service discovery (PTR, SRV, TXT)
   are not.
 * Over TCP, one query is served per connection.
 * Windows must allow `powershell.exe` to run. Locked-down managed machines may block it.

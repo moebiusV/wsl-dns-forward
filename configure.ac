@@ -1,5 +1,5 @@
 AC_PREREQ([2.69])
-AC_INIT([wsl-dns-forward], [1.0.0], [david@clearbrookdistillery.com], [wsl-dns-forward],
+AC_INIT([wsl-dns-forward], [1.1.0], [david@clearbrookdistillery.com], [wsl-dns-forward],
         [https://github.com/moebiusV/wsl-dns-forward])
 AC_CONFIG_SRCDIR([main.c])
 AC_CONFIG_AUX_DIR([build-aux])

@@ -27,7 +27,18 @@ enum dns_action {
     DNS_DROP,       /* ignore the packet */
     DNS_REPLY,      /* send the prepared reply */
     DNS_RELAY,      /* forward the original packet to the upstream resolver */
-    DNS_LOCAL_A     /* an A query for a .local name: look it up over mDNS */
+    DNS_LOCAL_A,    /* an A query for a .local name: look it up over mDNS */
+    DNS_LOCAL_AAAA  /* an AAAA query for a .local name: answered only when IPv6 is usable */
+};
+
+#define DNS_MAXV6 4
+
+/* The addresses found for one name.  IPv4 is in network order; each IPv6 address is 16 bytes. */
+struct dns_addrs {
+    int has4;
+    uint32_t v4;
+    int n6;
+    uint8_t v6[DNS_MAXV6][16];
 };
 
 struct dns_query {
@@ -65,13 +76,27 @@ size_t dns_build_a(const uint8_t *req, size_t qend, uint32_t ip, uint8_t *resp, 
 /* Does this upstream reply answer this request?  (QR set, same ID, same question.) */
 int dns_valid_relay_reply(const uint8_t *req, size_t reqlen, const uint8_t *rep, size_t replen);
 
+/* Build the answer for a .local query: A or AAAA records from a, or NOERROR with no data when a has none of that kind. */
+size_t dns_build_local(const uint8_t *req, size_t qend, unsigned qtype, const struct dns_addrs *a,
+                       uint8_t *resp, size_t cap);
+
 /*
- * Parse one line from the Windows helper: "<name> <ipv4>" or "<name> -".
- * Returns 1 if the line is well formed.  *found is 1 and *ip (network order)
- * is set for an address; unusable addresses (loopback, multicast, 0/8,
- * reserved) are treated as "not found".
+ * Parse one line from the Windows helper: "<name> <ipv4>|- [<ipv6>[,<ipv6>...]]".
+ * Returns 1 if the line is well formed.  *found is 1 when at least one usable address came back.
+ * Unusable addresses are dropped: for IPv4 loopback, multicast, 0/8 and reserved; for IPv6 the
+ * unspecified, loopback, multicast, link-local (it needs a scope) and IPv4-mapped addresses.
  */
-int dns_parse_helper_line(const char *line, char name[DNS_NAME_MAX], uint32_t *ip, int *found);
+int dns_parse_helper_line(const char *line, char name[DNS_NAME_MAX], struct dns_addrs *out, int *found);
+
+/* The inverse: "<name> <ipv4>|- [<ipv6>,...]", for the on-disk cache.  Returns the length, or 0 if cap is too small. */
+size_t dns_format_addrs(const char *name, const struct dns_addrs *a, char *out, size_t cap);
+
+/*
+ * Can this system route IPv6?  Takes the text of /proc/net/if_inet6 and /proc/net/ipv6_route and
+ * answers 1 when there is a global address on a real interface and a default route.  WSL2 in NAT mode
+ * has neither; mirrored networking has both.
+ */
+int dns_ipv6_usable(const char *if_inet6, const char *ipv6_route);
 
 /*
  * Extract usable upstream resolvers from the text of a resolv.conf: IPv4 "nameserver" lines, skipping
