@@ -1,6 +1,6 @@
 # wsl-dns-forward
 
-[Index: All Projects](https://moebiusv.github.io/) | [github.com/moebiusV/wsl-dns-forward](https://github.com/moebiusV/wsl-dns-forward) | `git clone https://github.com/moebiusV/wsl-dns-forward`
+Index: [All Projects](https://moebiusv.github.io/) | Git Repository: [github.com/moebiusV/wsl-dns-forward](https://github.com/moebiusV/wsl-dns-forward) | `git clone https://github.com/moebiusV/wsl-dns-forward`
 
 Rendezvous (also called mDNS or Bonjour) lets computers, printers and other devices on a local network be
 reached by a name ending in `.local`, such as `printer.local`, with no DNS server to set up.
